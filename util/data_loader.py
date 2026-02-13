@@ -2,6 +2,7 @@
 @author : Modified for HuggingFace tokenizers with Paper-compliant features
 @when : 2026-01-29
 @description : DataLoader following "Attention Is All You Need" specifications
+              Supports both WMT14 EN-DE (BPE) and WMT14 EN-FR (WordPiece)
 """
 import torch
 from torch.utils.data import Dataset, DataLoader as TorchDataLoader, Sampler
@@ -19,8 +20,8 @@ class TranslationDataset(Dataset):
         """
         Args:
             hf_dataset: HuggingFace dataset split (train/valid/test)
-            source_lang: source language key (e.g., 'de')
-            target_lang: target language key (e.g., 'en')
+            source_lang: source language key (e.g., 'en', 'de', 'fr')
+            target_lang: target language key (e.g., 'en', 'de', 'fr')
             source_tokenizer: tokenizer for source language
             target_tokenizer: tokenizer for target language
             source_vocab: source vocabulary dict {token: idx}
@@ -165,22 +166,28 @@ class DataLoader:
     Key features matching paper:
     - Token-based batching (~25k tokens per batch)
     - Length-based bucketing for efficiency
-    - Vocabulary size limit (37k for shared EN-DE)
+    - Vocabulary size limit (37k for EN-DE BPE, 32k for EN-FR WordPiece)
     - Support for shared vocabulary (optional)
+    
+    Supported datasets:
+    - WMT14 EN-DE: Byte-Pair Encoding (BPE), ~37k shared vocab
+    - WMT14 EN-FR: WordPiece, 32k vocab (separate EN/FR)
     """
     
-    def __init__(self, ext, tokenize_en, tokenize_de, init_token, eos_token):
+    def __init__(self, ext, tokenize_en, tokenize_de, init_token, eos_token, tokenize_fr=None):
         """
         Args:
-            ext: tuple of file extensions (e.g., ('.en', '.de'))
+            ext: tuple of file extensions (e.g., ('.en', '.de') or ('.en', '.fr'))
             tokenize_en: English tokenizer function
             tokenize_de: German tokenizer function
+            tokenize_fr: French tokenizer function (optional, for EN-FR)
             init_token: start of sequence token (e.g., '<sos>')
             eos_token: end of sequence token (e.g., '<eos>')
         """
         self.ext = ext
         self.tokenize_en = tokenize_en
         self.tokenize_de = tokenize_de
+        self.tokenize_fr = tokenize_fr
         self.init_token = init_token
         self.eos_token = eos_token
         
@@ -197,16 +204,21 @@ class DataLoader:
         Args:
             dataset_name: dataset name on HuggingFace Hub
                          'bentrevett/multi30k' for Multi30k
-                         'wmt14' for WMT 2014 (paper's dataset)
+                         'wmt14' for WMT 2014 EN-DE (paper's dataset)
+                         'wmt14_enfr' for WMT 2014 EN-FR (paper's dataset)
         
         Returns:
             train_data, valid_data, test_data
         """
         # Load dataset
         if dataset_name == 'wmt14':
-            # WMT 2014 dataset (paper's dataset)
+            # WMT 2014 EN-DE dataset (BPE, ~4.5M sentence pairs)
             dataset = load_dataset('wmt14', 'de-en')
             # Note: WMT14 uses 'translation' with 'de' and 'en' keys
+        elif dataset_name == 'wmt14_enfr':
+            # WMT 2014 EN-FR dataset (WordPiece, ~36M sentence pairs)
+            dataset = load_dataset('wmt14', 'fr-en')
+            # Note: WMT14 uses 'translation' with 'fr' and 'en' keys
         else:
             # Multi30k (smaller, faster for testing)
             dataset = load_dataset(dataset_name)
@@ -226,8 +238,21 @@ class DataLoader:
             self.target_lang = 'de'
             self.source_tokenizer = self.tokenize_en
             self.target_tokenizer = self.tokenize_de
+        elif self.ext == ('.en', '.fr'):
+            # EN-FR: English source, French target
+            self.source_lang = 'en'
+            self.target_lang = 'fr'
+            self.source_tokenizer = self.tokenize_en
+            self.target_tokenizer = self.tokenize_fr
+        elif self.ext == ('.fr', '.en'):
+            # FR-EN: French source, English target
+            self.source_lang = 'fr'
+            self.target_lang = 'en'
+            self.source_tokenizer = self.tokenize_fr
+            self.target_tokenizer = self.tokenize_en
         else:
-            raise ValueError(f"Unsupported extension pair: {self.ext}")
+            raise ValueError(f"Unsupported extension pair: {self.ext}. "
+                           f"Supported: (.en, .de), (.de, .en), (.en, .fr), (.fr, .en)")
         
         print(f'Loaded {len(train_data)} training samples')
         print(f'Loaded {len(valid_data)} validation samples')
@@ -242,16 +267,19 @@ class DataLoader:
         Args:
             train_data: training dataset
             min_freq: minimum frequency for a token to be included
-            max_vocab_size: maximum vocabulary size (e.g., 37000 for paper's EN-DE)
-                          None for unlimited
-            shared_vocab: if True, build shared source-target vocabulary (paper's approach)
+            max_vocab_size: maximum vocabulary size INCLUDING special tokens
+                          - EN-DE BPE: ~37,000 (shared, including 4 special tokens)
+                          - EN-FR WordPiece: 32,000 (separate, including 4 special tokens each)
+            shared_vocab: if True, build shared source-target vocabulary
         
         Paper specifications:
-        - EN-DE: shared vocabulary of ~37,000 tokens
-        - EN-FR: 32,000 word-piece tokens
+        - EN-DE: BPE with shared vocabulary of ~37,000 tokens
+        - EN-FR: WordPiece with 32,000 tokens (separate vocabularies)
+        
+        Note: max_vocab_size includes special tokens (<pad>, <unk>, <sos>, <eos>)
         """
         if shared_vocab:
-            # Build shared vocabulary (paper's approach for EN-DE)
+            # Build shared vocabulary (paper's approach for EN-DE BPE)
             combined_counter = defaultdict(int)
             
             for item in train_data:
@@ -271,6 +299,8 @@ class DataLoader:
             # Sort by frequency and add tokens
             sorted_tokens = sorted(combined_counter.items(), key=lambda x: x[1], reverse=True)
             
+            # ✅ FIX: Ensure max_vocab_size includes special tokens
+            # If max_vocab_size = 37000, we want 4 special + 36996 regular = 37000 total
             for token, freq in sorted_tokens:
                 if freq >= min_freq and token not in vocab:
                     if max_vocab_size is None or len(vocab) < max_vocab_size:
@@ -290,9 +320,11 @@ class DataLoader:
             self.target.vocab = self.source.vocab  # Share vocabulary
             
             print(f'Built shared vocabulary size: {len(vocab)}')
+            print(f'  Special tokens: 4 ({", ".join(special_tokens)})')
+            print(f'  Regular tokens: {len(vocab) - 4}')
             
         else:
-            # Build separate vocabularies
+            # Build separate vocabularies (paper's approach for EN-FR WordPiece)
             source_counter = defaultdict(int)
             target_counter = defaultdict(int)
             
@@ -315,6 +347,7 @@ class DataLoader:
             source_vocab = {token: idx for idx, token in enumerate(special_tokens)}
             sorted_src = sorted(source_counter.items(), key=lambda x: x[1], reverse=True)
             
+            # ✅ FIX: Ensure max_vocab_size includes special tokens
             for token, freq in sorted_src:
                 if freq >= min_freq and token not in source_vocab:
                     if max_vocab_size is None or len(source_vocab) < max_vocab_size:
@@ -326,6 +359,7 @@ class DataLoader:
             target_vocab = {token: idx for idx, token in enumerate(special_tokens)}
             sorted_trg = sorted(target_counter.items(), key=lambda x: x[1], reverse=True)
             
+            # ✅ FIX: Ensure max_vocab_size includes special tokens
             for token, freq in sorted_trg:
                 if freq >= min_freq and token not in target_vocab:
                     if max_vocab_size is None or len(target_vocab) < max_vocab_size:
@@ -350,8 +384,12 @@ class DataLoader:
                 '__len__': lambda self: len(target_vocab)
             })()
             
-            print(f'Source vocabulary size: {len(source_vocab)}')
-            print(f'Target vocabulary size: {len(target_vocab)}')
+            print(f'Source ({self.source_lang.upper()}) vocabulary size: {len(source_vocab)}')
+            print(f'  Special tokens: 4 ({", ".join(special_tokens)})')
+            print(f'  Regular tokens: {len(source_vocab) - 4}')
+            print(f'Target ({self.target_lang.upper()}) vocabulary size: {len(target_vocab)}')
+            print(f'  Special tokens: 4 ({", ".join(special_tokens)})')
+            print(f'  Regular tokens: {len(target_vocab) - 4}')
     
     def make_iter(self, train, validate, test, batch_size=None, max_tokens=25000, 
                   device='cpu', num_workers=0, max_len=256):
@@ -404,10 +442,6 @@ class DataLoader:
                                      padding_value=self.source.vocab.stoi['<pad>'])
             trg_padded = pad_sequence(trg_batch, batch_first=True,
                                      padding_value=self.target.vocab.stoi['<pad>'])
-            
-            # Move to device
-            #src_padded = src_padded.to(device)
-            #trg_padded = trg_padded.to(device)
             
             return Batch(src_padded, trg_padded)
         
