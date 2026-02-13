@@ -59,6 +59,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoTokenizer
 from util.data_loader import DataLoader
+from util.utils import initialize_weights
 from models.model.transformer import Transformer
 import time
 import sys
@@ -297,6 +298,25 @@ def parse_args():
     )
     
     parser.add_argument(
+        '--tokenizer_fr',
+        type=str,
+        default='gpt2',
+        help='French tokenizer model (default: gpt2)'
+    )
+    
+    # ================================================================
+    # Dataset Selection (EN-DE vs EN-FR)
+    # ================================================================
+    parser.add_argument(
+        '--dataset',
+        type=str,
+        default='en2de',
+        choices=['en2de', 'en2fr'],
+        help='Dataset to use: en2de (WMT14 EN-DE, BPE, 37k shared vocab) or '
+             'en2fr (WMT14 EN-FR, WordPiece, 32k separate vocab) (default: en2de)'
+    )
+    
+    parser.add_argument(
         '--checkpoint_dir',
         type=str,
         default='checkpoints',
@@ -425,18 +445,54 @@ def parse_args():
 def main():
     args = parse_args()
     
+    # ========================================================================
+    # Dataset configuration based on paper specification
+    # ========================================================================
+    if args.dataset == 'en2de':
+        # Paper: EN-DE with BPE, shared vocab ~37,000, 4.5M pairs
+        dataset_config = {
+            'name': 'wmt14',
+            'ext': ('.en', '.de'),
+            'tokenizer_src': args.tokenizer_en,
+            'tokenizer_tgt': args.tokenizer_de,
+            'vocab_size': 37000,
+            'shared_vocab': True,
+            'lang_pair': 'EN-DE',
+            'tokenization': 'BPE'
+        }
+    elif args.dataset == 'en2fr':
+        # Paper: EN-FR with WordPiece, 32k vocab (separate), 36M pairs
+        dataset_config = {
+            'name': 'wmt14_enfr',
+            'ext': ('.en', '.fr'),
+            'tokenizer_src': args.tokenizer_en,
+            'tokenizer_tgt': args.tokenizer_fr,
+            'vocab_size': 32000,
+            'shared_vocab': False,
+            'lang_pair': 'EN-FR',
+            'tokenization': 'WordPiece'
+        }
+    else:
+        raise ValueError(f"Unsupported dataset: {args.dataset}")
+    
     print("="*80)
-    print(" "*10 + "WMT14 Transformer with Step-based Training (Paper)")
+    print(" "*10 + f"WMT14 {dataset_config['lang_pair']} Transformer (Paper Implementation)")
     print("="*80)
-    print(f"\nConfiguration:")
+    print(f"\nDataset Configuration:")
+    print(f"  Dataset: WMT14 {dataset_config['lang_pair']}")
+    print(f"  Tokenization: {dataset_config['tokenization']}")
+    print(f"  Vocabulary size: {dataset_config['vocab_size']:,}")
+    print(f"  Shared vocabulary: {dataset_config['shared_vocab']}")
+    print()
+    print(f"Training Configuration:")
     print(f"  Load directory: {args.load_dir if args.load_dir else 'None (build vocab from scratch)'}")
     print(f"  Save directory: {args.save_dir}")
     print(f"  Max training steps: {args.max_steps:,} (논문: 100K)")
     print(f"  Max tokens per batch: {args.max_tokens:,}")
     print(f"  Checkpoint every: {args.checkpoint_every:,} steps")
     print(f"  Log every: {args.log_every} steps")
-    print(f"  English tokenizer: {args.tokenizer_en}")
-    print(f"  German tokenizer: {args.tokenizer_de}")
+    print(f"  Source tokenizer: {dataset_config['tokenizer_src']}")
+    print(f"  Target tokenizer: {dataset_config['tokenizer_tgt']}")
     print(f"  Checkpoint directory: {args.checkpoint_dir}")
     print(f"  Gradient checkpointing: {'Enabled' if args.gradient_checkpointing else 'Disabled'}")
     print(f"  Num workers: {args.num_workers}")
@@ -464,18 +520,20 @@ def main():
     # ------------------------------------------------------------------------
     print_section("1. 데이터셋 로드")
     
+    # Create DataLoader with appropriate configuration
     loader = DataLoader(
-        ext=('.en', '.de'),
+        ext=dataset_config['ext'],
         tokenize_en=None,
-        tokenize_de=None,
+        tokenize_de=None if args.dataset == 'en2de' else None,
+        tokenize_fr=None if args.dataset == 'en2fr' else None,
         init_token='<sos>',
         eos_token='<eos>'
     )
     
-    print("Loading WMT14 dataset...")
+    print(f"Loading WMT14 {dataset_config['lang_pair']} dataset...")
     start_time = time.time()
     
-    train, valid, test = loader.make_dataset(dataset_name='wmt14')
+    train, valid, test = loader.make_dataset(dataset_name=dataset_config['name'])
     
     elapsed = time.time() - start_time
     print(f"\n✓ Dataset loaded in {elapsed:.1f}s")
@@ -487,51 +545,61 @@ def main():
     # 2. 토크나이저 로드
     # ------------------------------------------------------------------------
     if args.load_dir:
-        tokenizer_en, tokenizer_de, metadata = load_training_artifacts(loader, args.load_dir)
+        tokenizer_en, tokenizer_tgt, metadata = load_training_artifacts(loader, args.load_dir)
         loader.tokenize_en = tokenizer_en.tokenize
-        loader.tokenize_de = tokenizer_de.tokenize
+        if args.dataset == 'en2de':
+            loader.tokenize_de = tokenizer_tgt.tokenize
+        else:  # en2fr
+            loader.tokenize_fr = tokenizer_tgt.tokenize
         loader.source_tokenizer = tokenizer_en
-        loader.target_tokenizer = tokenizer_de
+        loader.target_tokenizer = tokenizer_tgt
     else:
         print_section("2. 사전 학습 토크나이저 로드")
         
         print("=" * 80)
-        print("🚀 Using Pre-trained Tokenizers - No 42-hour Training!")
+        print(f"🚀 Using Pre-trained {dataset_config['tokenization']} Tokenizers")
         print("=" * 80)
         print()
         
         print("English Tokenizer:")
-        tokenizer_en = PretrainedBPETokenizer(model_name=args.tokenizer_en)
+        tokenizer_en = PretrainedBPETokenizer(model_name=dataset_config['tokenizer_src'])
         
         print()
         
-        print("German Tokenizer:")
-        tokenizer_de = PretrainedBPETokenizer(model_name=args.tokenizer_de)
+        if args.dataset == 'en2de':
+            print("German Tokenizer:")
+            tokenizer_tgt = PretrainedBPETokenizer(model_name=dataset_config['tokenizer_tgt'])
+            loader.tokenize_de = tokenizer_tgt.tokenize
+        else:  # en2fr
+            print("French Tokenizer:")
+            tokenizer_tgt = PretrainedBPETokenizer(model_name=dataset_config['tokenizer_tgt'])
+            loader.tokenize_fr = tokenizer_tgt.tokenize
         
         print()
         print("=" * 80)
-        print("✓ Both tokenizers ready! (Total time: ~2 seconds)")
-        print("  ⏱️  Time saved: ~84 hours (42h EN + 42h DE)")
+        print(f"✓ Both tokenizers ready! ({dataset_config['lang_pair']})")
         print("=" * 80)
         
         loader.source_tokenizer = tokenizer_en
-        loader.target_tokenizer = tokenizer_de
+        loader.target_tokenizer = tokenizer_tgt
+        loader.tokenize_en = tokenizer_en.tokenize
         
         # ------------------------------------------------------------------------
         # 3. 어휘 사전 구축
         # ------------------------------------------------------------------------
         print_section("3. 어휘 사전 구축")
         
-        print("Building vocabulary from tokenized data...")
+        print(f"Building vocabulary from tokenized data...")
+        print(f"  Tokenization: {dataset_config['tokenization']}")
+        print(f"  Max vocab size: {dataset_config['vocab_size']:,}")
+        print(f"  Shared vocab: {dataset_config['shared_vocab']}")
         vocab_start = time.time()
-        
-        effective_vocab_size = min(tokenizer_en.vocab_size, tokenizer_de.vocab_size)
         
         loader.build_vocab(
             train_data=train,
             min_freq=2,
-            max_vocab_size=37000,  # 논문 설정
-            shared_vocab=True
+            max_vocab_size=dataset_config['vocab_size'],
+            shared_vocab=dataset_config['shared_vocab']
         )
         
         print(f"\n✓ Vocabulary built in {time.time() - vocab_start:.1f}s")
@@ -539,7 +607,7 @@ def main():
         # ------------------------------------------------------------------------
         # 4. 결과물 저장
         # ------------------------------------------------------------------------
-        save_training_artifacts(tokenizer_en, tokenizer_de, loader, args.save_dir)
+        save_training_artifacts(tokenizer_en, tokenizer_tgt, loader, args.save_dir)
     
     # ------------------------------------------------------------------------
     # 어휘 정보 출력
@@ -653,6 +721,15 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"\n✓ Model initialized")
     print(f"  Total parameters: {total_params:,}")
+    
+    # Apply Xavier weight initialization
+    print(f"\nApplying Xavier weight initialization...")
+    model.apply(initialize_weights)
+    print(f"✓ Weight initialization complete")
+    print(f"  - Linear layers: Xavier Uniform")
+    print(f"  - Embeddings: Normal(std=d_model^-0.5)")
+    print(f"  - LayerNorm: weight=1.0, bias=0.0")
+    print(f"  - MultiheadAttention: Xavier for internal weights")
     
     # ------------------------------------------------------------------------
     # 7. Optimizer 및 Scheduler
