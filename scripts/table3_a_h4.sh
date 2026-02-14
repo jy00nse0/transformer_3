@@ -12,14 +12,13 @@ python demo_wmt14_pretrained.py \
     --load_dir ${VOCAB_DIR} \
     --save_dir ${VOCAB_DIR} \
     --checkpoint_dir "checkpoints/table3_a_h4" \
-    --last_checkpoint_path /root/transformer/checkpoints/table3_a_h4/model_step_70000.pt \
     --gradient_checkpointing \
     --n_head 4 \
     --max_steps 100000
 
 # Inference & Evaluation
 python inference.py \
-    --checkpoint_path "checkpoints/table3_a_h4/model_averaged_last5.pt" \
+    --checkpoint_path "checkpoints/table3_a_h4/model_best.pt" \
     --vocab_dir ${VOCAB_DIR} \
     --output_file "results/table3_a_h4_decode.txt"
 
