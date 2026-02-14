@@ -59,7 +59,7 @@ def test_embedding_scaling():
     print(f"\nEmbedding values (first token, first 5 dimensions):")
     print(f"  Unscaled token embedding: {tok_emb_unscaled[0, 0, :5]}")
     print(f"  Scaled token embedding:   {tok_emb_scaled[0, 0, :5]}")
-    print(f"  Positional encoding:      {pos_emb[0, :5]}")
+    print(f"  Positional encoding:      {pos_emb[0, :5]}")  # pos_emb shape: [seq_len, d_model]
     print(f"  Expected output (scaled + pos): {expected_output[0, 0, :5]}")
     print(f"  Actual output:            {output[0, 0, :5]}")
     
