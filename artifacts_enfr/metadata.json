@@ -1,0 +1,9 @@
+{
+  "vocab_size": 32000,
+  "shared_vocab": false,
+  "src_pad_idx": 0,
+  "trg_pad_idx": 0,
+  "trg_sos_idx": 2,
+  "tokenizer_type": "pretrained",
+  "timestamp": "2026-02-14 09:22:53"
+}
