@@ -68,9 +68,13 @@ class Transformer(nn.Module):
         self.decoder.linear.weight = self.encoder.emb.tok_emb.weight
         
         # Verify Weight Tying after initialization
-        assert id(self.encoder.emb.tok_emb.weight) == id(self.decoder.emb.tok_emb.weight), \
+        encoder_emb_id = id(self.encoder.emb.tok_emb.weight)
+        decoder_emb_id = id(self.decoder.emb.tok_emb.weight)
+        decoder_linear_id = id(self.decoder.linear.weight)
+        
+        assert encoder_emb_id == decoder_emb_id, \
             "Weight Tying broken: encoder and decoder embeddings are not shared"
-        assert id(self.encoder.emb.tok_emb.weight) == id(self.decoder.linear.weight), \
+        assert encoder_emb_id == decoder_linear_id, \
             "Weight Tying broken: embedding and output linear are not shared"
 
         # ================================================================
@@ -84,8 +88,8 @@ class Transformer(nn.Module):
         print(f"  - Decoder embedding: shared")
         print(f"  - Output linear:     shared")
         print(f"\n✓ Weight Tying verified after initialization")
-        print(f"  - id(encoder.emb) == id(decoder.emb): {id(self.encoder.emb.tok_emb.weight) == id(self.decoder.emb.tok_emb.weight)}")
-        print(f"  - id(encoder.emb) == id(decoder.linear): {id(self.encoder.emb.tok_emb.weight) == id(self.decoder.linear.weight)}")
+        print(f"  - id(encoder.emb) == id(decoder.emb): {encoder_emb_id == decoder_emb_id}")
+        print(f"  - id(encoder.emb) == id(decoder.linear): {encoder_emb_id == decoder_linear_id}")
 
         # ---- Attention 모드 출력 ----
         if use_custom:

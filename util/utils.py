@@ -88,8 +88,9 @@ def initialize_weights_safe(model):
             if id(module.weight) not in initialized_params:
                 nn.init.normal_(module.weight, mean=0, std=module.embedding_dim ** -0.5)
                 initialized_params.add(id(module.weight))
-                if module.padding_idx is not None:
-                    nn.init.constant_(module.weight[module.padding_idx], 0)
+            # Always zero the padding index, even for shared embeddings
+            if module.padding_idx is not None:
+                nn.init.constant_(module.weight[module.padding_idx], 0)
         
         elif isinstance(module, nn.LayerNorm):
             nn.init.constant_(module.weight, 1.0)
