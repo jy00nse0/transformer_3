@@ -9,6 +9,7 @@
 @when : 2019-10-22
 @homepage : https://github.com/gusdnd852
 """
+import math
 from torch import nn
 from models.embedding.positional_encoding import PositionalEncoding
 
@@ -27,6 +28,7 @@ class Embedding(nn.Module):
         :param d_model: dimensions of model
         """
         super(Embedding, self).__init__()
+        self.d_model = d_model
         #TokenEmbedding
         self.tok_emb = nn.Embedding(vocab_size, d_model, padding_idx=1)
         self.pos_emb = PositionalEncoding(d_model, max_len, device)
@@ -34,6 +36,8 @@ class Embedding(nn.Module):
 
     def forward(self, x):
         tok_emb = self.tok_emb(x)
+        # Scale embeddings by sqrt(d_model) as per the Transformer paper
+        tok_emb = tok_emb * math.sqrt(self.d_model)
         pos_emb = self.pos_emb(x)
         #  we apply dropout to the sums of the embeddings and the positional encodings in both the encoder and decoder stacks.
         return self.drop_out(tok_emb + pos_emb)
