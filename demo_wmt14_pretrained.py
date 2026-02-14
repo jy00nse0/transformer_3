@@ -722,14 +722,14 @@ def main():
     print(f"\n✓ Model initialized")
     print(f"  Total parameters: {total_params:,}")
     
-    # Apply Xavier weight initialization
-    print(f"\nApplying Xavier weight initialization...")
-    model.apply(initialize_weights)
-    print(f"✓ Weight initialization complete")
+    # NOTE: Weight initialization is now handled inside Transformer.__init__()
+    # This prevents breaking the Weight Tying mechanism
+    print(f"\n✓ Weight initialization complete (done in Transformer.__init__)")
     print(f"  - Linear layers: Xavier Uniform")
     print(f"  - Embeddings: Normal(std=d_model^-0.5)")
     print(f"  - LayerNorm: weight=1.0, bias=0.0")
     print(f"  - MultiheadAttention: Xavier for internal weights")
+    print(f"  - Weight Tying: PRESERVED (shared parameters initialized only once)")
     
     # ------------------------------------------------------------------------
     # 7. Optimizer 및 Scheduler
