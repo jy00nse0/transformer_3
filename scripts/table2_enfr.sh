@@ -1,13 +1,14 @@
 #!/bin/sh
 # bash scripts/table2_enfr.sh | tee logs/table2_enfr$(date +%Y%m%d_%H%M).log
 
-VOCAB_DIR="artifacts_pretrained"
+VOCAB_DIR="artifacts_enfr"
 NAME="table3_base"
 CHECKPOINT_DIR="checkpoints/${NAME}/model_best.pt"
 
 # Training (Base model configuration)
 python demo_wmt14_pretrained.py \
     --dataset en2fr \
+    --load_dir ${VOCAB_DIR} \
     --save_dir ${VOCAB_DIR} \
     --checkpoint_dir ${CHECKPOINT_DIR} \
     --gradient_checkpointing \
