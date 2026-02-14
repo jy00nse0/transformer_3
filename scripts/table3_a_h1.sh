@@ -18,7 +18,7 @@ python demo_wmt14_pretrained.py \
 
 # Inference & Evaluation
 python inference.py \
-    --checkpoint_path "checkpoints/table3_a_h1/model_averaged_last5.pt" \
+    --checkpoint_path "checkpoints/table3_a_h1/model_best.pt" \
     --vocab_dir ${VOCAB_DIR} \
     --output_file "results/table3_a_h1_decode.txt"
 
