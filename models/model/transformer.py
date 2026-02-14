@@ -53,12 +53,25 @@ class Transformer(nn.Module):
                                d_v=d_v)
 
         # ================================================================
+        # Weight Initialization (BEFORE Weight Tying)
+        # Apply initialization first to avoid breaking weight sharing
+        # ================================================================
+        from util.utils import initialize_weights_safe
+        initialize_weights_safe(self)
+
+        # ================================================================
         # Weight Tying (논문 필수 명세)
         # "We share the same weight matrix between the two embedding
         #  layers and the pre-softmax linear transformation"
         # ================================================================
         self.decoder.emb.tok_emb.weight = self.encoder.emb.tok_emb.weight
         self.decoder.linear.weight = self.encoder.emb.tok_emb.weight
+        
+        # Verify Weight Tying after initialization
+        assert id(self.encoder.emb.tok_emb.weight) == id(self.decoder.emb.tok_emb.weight), \
+            "Weight Tying broken: encoder and decoder embeddings are not shared"
+        assert id(self.encoder.emb.tok_emb.weight) == id(self.decoder.linear.weight), \
+            "Weight Tying broken: embedding and output linear are not shared"
 
         # ================================================================
         # 초기화 정보 출력
@@ -70,6 +83,9 @@ class Transformer(nn.Module):
         print(f"  - Encoder embedding: shared")
         print(f"  - Decoder embedding: shared")
         print(f"  - Output linear:     shared")
+        print(f"\n✓ Weight Tying verified after initialization")
+        print(f"  - id(encoder.emb) == id(decoder.emb): {id(self.encoder.emb.tok_emb.weight) == id(self.decoder.emb.tok_emb.weight)}")
+        print(f"  - id(encoder.emb) == id(decoder.linear): {id(self.encoder.emb.tok_emb.weight) == id(self.decoder.linear.weight)}")
 
         # ---- Attention 모드 출력 ----
         if use_custom:

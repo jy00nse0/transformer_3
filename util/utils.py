@@ -60,3 +60,50 @@ def initialize_weights(m):
             if m.out_proj.bias is not None:
                 nn.init.constant_(m.out_proj.bias, 0)
 
+
+def initialize_weights_safe(model):
+    """
+    Weight Tying-aware initialization
+    Tracks shared parameters to avoid re-initialization
+    
+    This function prevents breaking weight tying by tracking which parameters
+    have already been initialized using their id(). When the same parameter
+    is encountered again (due to weight sharing), it skips re-initialization.
+    
+    Args:
+        model: The model to initialize
+    """
+    from torch import nn
+    initialized_params = set()
+    
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            if id(module.weight) not in initialized_params:
+                nn.init.xavier_uniform_(module.weight)
+                initialized_params.add(id(module.weight))
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0)
+        
+        elif isinstance(module, nn.Embedding):
+            if id(module.weight) not in initialized_params:
+                nn.init.normal_(module.weight, mean=0, std=module.embedding_dim ** -0.5)
+                initialized_params.add(id(module.weight))
+                if module.padding_idx is not None:
+                    nn.init.constant_(module.weight[module.padding_idx], 0)
+        
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.constant_(module.weight, 1.0)
+            nn.init.constant_(module.bias, 0.0)
+        
+        elif isinstance(module, nn.MultiheadAttention):
+            if module.in_proj_weight is not None and id(module.in_proj_weight) not in initialized_params:
+                nn.init.xavier_uniform_(module.in_proj_weight)
+                initialized_params.add(id(module.in_proj_weight))
+            
+            if module.out_proj is not None:
+                if id(module.out_proj.weight) not in initialized_params:
+                    nn.init.xavier_uniform_(module.out_proj.weight)
+                    initialized_params.add(id(module.out_proj.weight))
+                if module.out_proj.bias is not None:
+                    nn.init.constant_(module.out_proj.bias, 0)
+
