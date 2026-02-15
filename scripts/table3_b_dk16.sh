@@ -18,8 +18,8 @@ python demo_wmt14_pretrained.py \
     --max_steps 100000
 
 # Inference & Evaluation
-python inference.py \
-    --checkpoint_path "checkpoints/table3_b_dk16/model_averaged_last5.pt" \
+python inference_batched.py \
+    --checkpoint_path "checkpoints/table3_b_dk16/model_best.pt" \
     --vocab_dir ${VOCAB_DIR} \
     --output_file "results/table3_b_dk16.txt"
 
