@@ -46,23 +46,35 @@ class DecoderLayer(nn.Module):
         
         # trg_mask 처리
         # Transformer.make_trg_mask()는 (B, 1, L, L) 형태
-        # - Causal mask (look-ahead 방지) + Padding mask 결합
-        # PyTorch MultiheadAttention의 attn_mask는:
-        #   - 형태: (L, L) 또는 (B*num_heads, L, L)
-        #   - 타입: Float (0.0 = 허용, -inf = 무시)
+        # - trg_mask[b, 0, i, j] = True if (trg[b, i] is not padding) AND (j <= i)
+        #
+        # PyTorch MultiheadAttention 권장 방식으로 분리:
+        #   - attn_mask: (L, L) float, causal mask 전용 (0.0=허용, -inf=차단)
+        #   - key_padding_mask: (B, L) bool, 배치별 padding mask (True=차단)
+        #
+        # key_padding_mask 추출: trg_mask[b, 0, j, j] = True iff position j is not padding
+        # (i=j이면 causal 조건 j<=i가 항상 참이므로 padding 여부만 남음)
         
         if trg_mask is not None:
-            # (B, 1, L, L) -> (L, L)
-            # 모든 배치에 대해 동일한 causal mask 사용
-            attn_mask = trg_mask[0, 0, :, :]  # (L, L)
-            
-            # Boolean -> Float 변환
-            # True (허용) -> 0.0, False (무시) -> -inf
-            attn_mask = attn_mask.float()
-            attn_mask = attn_mask.masked_fill(attn_mask == 0, float('-inf'))
-            attn_mask = attn_mask.masked_fill(attn_mask == 1, float(0.0))
+            L = trg_mask.size(2)
+            # Causal mask: (L, L), 배치에 무관한 하삼각 마스크
+            causal = torch.tril(torch.ones(L, L, device=trg_mask.device, dtype=torch.bool))
+            attn_mask = torch.zeros(L, L, device=trg_mask.device, dtype=torch.float)
+            attn_mask = attn_mask.masked_fill(~causal, float('-inf'))
+
+            # 배치별 padding mask: diagonal에서 추출 -> (B, L)
+            # trg_mask[:, 0, :, :] shape: (B, L, L)
+            # trg_mask[b, 0, j, j] = True iff position j is NOT padding
+            # ~(...) 반전 → is_padding: True = padding 위치
+            idx = torch.arange(L, device=trg_mask.device)
+            is_padding = ~trg_mask[:, 0, idx, idx]  # (B, L), True = padding
+            # Float key_padding_mask (0.0=허용, -inf=차단) — attn_mask와 타입 통일
+            key_padding_mask = torch.zeros(
+                is_padding.size(), device=trg_mask.device, dtype=torch.float
+            ).masked_fill(is_padding, float('-inf'))
         else:
             attn_mask = None
+            key_padding_mask = None
         
         # Self Attention 수행
         x, _ = self.self_attention(
@@ -70,6 +82,7 @@ class DecoderLayer(nn.Module):
             key=dec, 
             value=dec, 
             attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
             need_weights=False
         )
         
