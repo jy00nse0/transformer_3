@@ -120,17 +120,34 @@ class CustomDecoderLayer(nn.Module):
         # ================================================================
         residual = dec
         
-        # Handle trg_mask (causal mask)
+        # Handle trg_mask
+        # trg_mask shape: (B, 1, L, L)
+        # trg_mask[b, 0, i, j] = True if (trg[b, i] is not padding) AND (j <= i)
+        #
+        # Separate into:
+        #   - attn_mask: (L, L) float, causal-only (0.0=허용, -inf=차단)
+        #   - key_padding_mask: (B, L) bool, per-batch padding (True=차단)
+        #
+        # key_padding_mask 추출: trg_mask[b, 0, j, j] = True iff position j is not padding
         if trg_mask is not None:
-            # (B, 1, L, L) → (L, L)
-            attn_mask = trg_mask[0, 0, :, :]
-            
-            # Boolean → Float
-            attn_mask = attn_mask.float()
-            attn_mask = attn_mask.masked_fill(attn_mask == 0, float('-inf'))
-            attn_mask = attn_mask.masked_fill(attn_mask == 1, float(0.0))
+            L = trg_mask.size(2)
+            # Causal mask: lower-triangular, batch-independent
+            causal = torch.tril(torch.ones(L, L, device=trg_mask.device, dtype=torch.bool))
+            attn_mask = torch.zeros(L, L, device=trg_mask.device, dtype=torch.float)
+            attn_mask = attn_mask.masked_fill(~causal, float('-inf'))
+
+            # Per-batch padding mask from diagonal: (B, L)
+            # trg_mask[b, 0, j, j] = True iff position j is NOT padding
+            # ~(...) inverts so that is_padding is True where token IS padding
+            idx = torch.arange(L, device=trg_mask.device)
+            is_padding = ~trg_mask[:, 0, idx, idx]
+            # Float key_padding_mask (0.0=허용, -inf=차단) — attn_mask와 타입 통일
+            key_padding_mask = torch.zeros(
+                is_padding.size(), device=trg_mask.device, dtype=torch.float
+            ).masked_fill(is_padding, float('-inf'))
         else:
             attn_mask = None
+            key_padding_mask = None
         
         # Self Attention
         x, _ = self.self_attention(
@@ -138,6 +155,7 @@ class CustomDecoderLayer(nn.Module):
             key=dec,
             value=dec,
             attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
             need_weights=False
         )
         
