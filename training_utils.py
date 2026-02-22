@@ -71,10 +71,15 @@ class NaNSafeTrainer:
             }
         
         # ================================================================
-        # Check 2: Clamp output to prevent extreme values
+        # Check 2: Do NOT clamp output before loss calculation
         # ================================================================
-        # Before softmax (in loss), clamp logits to reasonable range
-        output = torch.clamp(output, min=-50, max=50)
+        # Clamping before loss breaks gradient flow and causes model collapse
+        # especially with label_smoothing=0.0. Let the loss function handle
+        # the logits naturally, and rely on gradient clipping for stability.
+        # 
+        # Previous approach: output = torch.clamp(output, min=-50, max=50)
+        # This caused BLEU=0.00 with label_smoothing=0.0 because the model
+        # learned to always produce clamped logits at the boundaries.
         
         # ================================================================
         # Check 3: Compute loss
